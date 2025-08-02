@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>وصل دفع - شركة رماح الإعمار</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f4f4f4;
+      margin: 0;
+      padding: 20px;
+    }
+    .container {
+      max-width: 750px;
+      margin: auto;
+      background: white;
+      padding: 20px;
+      border-radius: 5px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+    label {
+      display: block;
+      margin: 10px 0 5px;
+    }
+    input, select, textarea, button {
+      width: 100%;
+      padding: 10px;
+      margin-bottom: 10px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      font-size: 1rem;
+    }
+    button {
+      background-color: #28a745;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #218838;
+    }
+    .hidden { display: none; }
+    .invoice-box {
+      background: white;
+      padding: 20px;
+      font-size: 18px;
+      line-height: 1.8;
+    }
+    .signature {
+      margin-top: 60px;
+      text-align: right;
+    }
+    #logoSize {
+      width: 100%;
+      margin-bottom: 10px;
+    }
+    .font-control {
+      margin-bottom: 15px;
+    }
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .actions button {
+      width: auto;
+    }
+    .top-controls {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    .top-controls > div {
+      flex: 1;
+    }
+    .top-controls button {
+      width: auto;
+    }
+    .danger-btn {
+      background-color: #dc3545;
+    }
+    .danger-btn:hover {
+      background-color: #c82333;
+    }
+  </style>
+
+  <!-- jsPDF & html2canvas -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <!-- SheetJS (xlsx) لتوليد ملف Excel -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <div class="container">
+
+    <!-- ======== أزرار التحكم العليا ======== -->
+    <div class="top-controls">
+      <div>
+        <label>حجم الشعار:</label>
+        <input type="range" id="logoSize" min="50" max="200" value="100" />
+      </div>
+      <button id="excelBtn" type="button">تنزيل ملف Excel</button>
+      <button id="openExcelBtn" type="button">فتح ملف Excel</button>
+      <button id="clearReceiptsBtn" type="button" class="danger-btn">مسح السجل</button>
+    </div>
+
+    <h2 style="text-align:center;">إنشاء وصل دفع</h2>
+    <form id="invoiceForm">
+      <label>شعار الشركة:</label>
+      <input type="file" id="logoInput" accept="image/*" />
+      
+      <label>اسم المستلم:</label><input id="recipientName" required>
+      <label>اسم المحاسب:</label><input id="accountantName" required>
+      <label>مكان الاستلام:</label><input id="workLocation" required>
+      <label>نوع الدفعة:</label><input id="type" required>
+      <label>المبلغ:</label><input type="number" id="amount" required>
+      <label>العملة:</label>
+      <select id="currency"><option>دينار عراقي</option><option>دولار أمريكي</option></select>
+      <label>سبب الاستلام:</label><textarea id="reason" required></textarea>
+      
+      <div class="font-control">
+        <label>حجم الخط:</label>
+        <input type="range" id="fontSize" min="10" max="30" value="18" />
+        <span id="fontSizeValue">18</span> px
+      </div>
+      
+      <button type="submit">إنشاء الوصل</button>
+    </form>
+
+    <div id="invoicePreview" class="hidden">
+      <h3 style="text-align:center;">معاينة الوصل</h3>
+      <div id="invoiceContent" class="invoice-box"></div>
+
+      <div class="actions">
+        <button id="downloadBtn">تحميل PDF (وصلين A5 أفقياً في A4)</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ========= التخزين المحلي =========
+    let receipts = JSON.parse(localStorage.getItem('receipts') || '[]');
+    let invoiceNumber = parseInt(localStorage.getItem('invoiceNumber') || '0');
+
+    // ========= الشعار =========
+    let logoBase64 = localStorage.getItem('companyLogo') || "";
+    document.getElementById('logoInput').addEventListener('change', function(event) {
+      const file = event.target.files[0];
+      if (!file || !file.type.startsWith('image/')) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        logoBase64 = e.target.result;
+        localStorage.setItem('companyLogo', logoBase64);
+      };
+      reader.readAsDataURL(file);
+    });
+
+    // ========= التحكم بحجم الخط =========
+    const fontSizeInput = document.getElementById('fontSize');
+    const fontSizeValue = document.getElementById('fontSizeValue');
+    const invoiceContent = document.getElementById('invoiceContent');
+    fontSizeInput.addEventListener('input', () => {
+      fontSizeValue.textContent = fontSizeInput.value;
+      invoiceContent.style.fontSize = fontSizeInput.value + 'px';
+    });
+
+    // ========= تحويل الرقم إلى كلمات =========
+    function numberToArabicWords(n) {
+      if (n === 0) return "صفر";
+      const ones = ["", "واحد", "اثنان", "ثلاثة", "أربعة", "خمسة", "ستة", "سبعة", "ثمانية", "تسعة"];
+      const tens = ["", "عشرة", "عشرون", "ثلاثون", "أربعون", "خمسون", "ستون", "سبعون", "ثمانون", "تسعون"];
+      const teens = ["عشرة", "أحد عشر", "اثنا عشر", "ثلاثة عشر", "أربعة عشر", "خمسة عشر", "ستة عشر", "سبعة عشر", "ثمانية عشر", "تسعة عشر"];
+      const hundreds = ["", "مائة", "مائتان", "ثلاثمائة", "أربعمائة", "خمسمائة", "ستمائة", "سبعمائة", "ثمانمائة", "تسعمائة"];
+      let result = [];
+      if (n >= 1000000) {
+        const millions = Math.floor(n / 1000000);
+        result.push(numberToArabicWords(millions) + " مليون");
+        n %= 1000000;
+      }
+      if (n >= 1000) {
+        const thousands = Math.floor(n / 1000);
+        if (thousands === 1) result.push("ألف");
+        else result.push(numberToArabicWords(thousands) + " ألف");
+        n %= 1000;
+      }
+      if (n >= 100) {
+        const h = Math.floor(n / 100);
+        if (hundreds[h]) result.push(hundreds[h]);
+        n %= 100;
+      }
+      if (n >= 20) {
+        const t = Math.floor(n / 10);
+        const o = n % 10;
+        if (o) result.push(ones[o] + " و" + tens[t]);
+        else result.push(tens[t]);
+      } else if (n >= 10) {
+        result.push(teens[n - 10]);
+      } else if (n > 0) {
+        result.push(ones[n]);
+      }
+      return result.join(" و ");
+    }
+
+    // ========= إنشاء الوصل =========
+    document.getElementById('invoiceForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      const recipient = document.getElementById('recipientName').value;
+      const accountant = document.getElementById('accountantName').value;
+      const workLoc = document.getElementById('workLocation').value;
+      const type = document.getElementById('type').value;
+      const amount = parseFloat(document.getElementById('amount').value);
+      const currency = document.getElementById('currency').value;
+      const reason = document.getElementById('reason').value;
+      const logoSize = document.getElementById('logoSize').value;
+
+      invoiceNumber += 1;
+      localStorage.setItem('invoiceNumber', invoiceNumber);
+
+      const now = new Date();
+      const date = now.toLocaleDateString('ar-EG');
+      const time = now.toLocaleTimeString('ar-EG');
+      const amountText = numberToArabicWords(Math.floor(amount)) + " " + currency;
+      const currencySymbol = currency === "دينار عراقي" ? "IQD" : "$";
+
+      // حفظ البيانات
+      const record = {
+        invoiceNumber: `00${invoiceNumber}`,
+        date,
+        time,
+        recipient,
+        accountant,
+        amount,
+        currency,
+        amountText,
+        workLoc,
+        type,
+        reason
+      };
+      receipts.push(record);
+      localStorage.setItem('receipts', JSON.stringify(receipts));
+
+      const html = `
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px;">
+          <div style="text-align: right; color: #003366; line-height: 1.5;">
+            <h2 style="margin: 0;">شركة رماح الإعمار</h2>
+            <h2 style="margin: 0;">للتجارة والمقاولات</h2>
+            <h2 style="margin: 0;">العامة المحدودة</h2>
+          </div>
+          <div style="text-align: center; flex: 1;">
+            ${logoBase64 ? `<img src="${logoBase64}" style="height:${logoSize}px;" />` : ""}
+          </div>
+          <div style="text-align: left; color: #003366; line-height: 1.5;">
+            <h2 style="margin: 0;">الإدارة المالية العامة</h2>
+            <h2 style="margin: 0;">قسم الحسابات</h2>
+            <h2 style="margin: 0;">حسابات الدفع والتسديد</h2>
+          </div>
+        </div>
+        <div style="background-color: #003366; color: rgba(255,255,255,0.85); text-align: center; height: 3mm; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; border-radius: 2px; margin-top: 13px;">
+          REMAH AL-EMAAR CO. FOR GENERAL TRADING & CONTRACTING LTD.
+        </div>
+        <div style="text-align:center; color:#003366; line-height:1.5;">
+          <h2 style="margin: 0;">وصل قبض</h2>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px; color: red; font-weight: bold;">
+          <div>رقم الوصل : 00${invoiceNumber}</div>
+          <div>${date} - ${time}</div>
+        </div>
+        <p><strong style="color: #66ccff;">${amount.toLocaleString()} ${currencySymbol}</strong></p>
+        <p><strong>دفع للسيد:</strong> ${recipient}</p>
+        <p><strong>من المحاسب:</strong> ${accountant}</p>
+        <p><strong>مبلغ وقدره:</strong> ${amountText}</p>
+        <p><strong>مكان الاستلام:</strong> ${workLoc}</p>
+        <p><strong>نوع الدفعة:</strong> ${type}</p>
+        <p><strong>وذلك عن:</strong> ${reason}</p>
+        <div class="signature">
+          <p>اسم المستلم وتوقيعه:</p>
+          <p style="margin-top:30px;">_________________________</p>
+        </div>
+        <div style="background-color: #003366; color: rgba(255,255,255,0.85); text-align: center; height: 3mm; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; border-radius: 2px; margin-top: 270px;">
+          REMAH AL-EMAAR CO. FOR GENERAL TRADING & CONTRACTING LTD.
+        </div>
+      `;
+      invoiceContent.innerHTML = html;
+      document.getElementById('invoicePreview').classList.remove('hidden');
+    });
+
+    // ========= PDF =========
+    document.getElementById('downloadBtn').addEventListener('click', function () {
+      const content = document.getElementById('invoiceContent');
+      html2canvas(content, { scale: 2 }).then(canvas => {
+        const imgData = canvas.toDataURL('image/png');
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF('l', 'mm', 'a4');
+        const a5Width = 148;
+        const a5Height = 210;
+        pdf.addImage(imgData, 'PNG', 0, 0, a5Width, a5Height);
+        pdf.addImage(imgData, 'PNG', a5Width, 0, a5Width, a5Height);
+        pdf.save(`وصلين_افقي_${Date.now()}.pdf`);
+      });
+    });
+
+    // ========= Excel =========
+    function buildExcelWorkbook() {
+      const headers = ["رقم الوصل","التاريخ","الوقت","اسم المستلم","اسم المحاسب","المبلغ","العملة","المبلغ كتابة","مكان الاستلام","نوع الدفعة","السبب"];
+      const data = [headers];
+      receipts.forEach(r => {
+        data.push([r.invoiceNumber,r.date,r.time,r.recipient,r.accountant,r.amount,r.currency,r.amountText,r.workLoc,r.type,r.reason]);
+      });
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(data);
+      const totalRowIndex = data.length + 1;
+      const amountColumnLetter = 'F';
+      ws['E' + totalRowIndex] = { t: 's', v: 'المجموع' };
+      ws[amountColumnLetter + totalRowIndex] = { t: 'n', f: `SUM(${amountColumnLetter}2:${amountColumnLetter}${data.length})` };
+      ws['!cols'] = [{wch:12},{wch:14},{wch:12},{wch:18},{wch:18},{wch:14},{wch:12},{wch:30},{wch:18},{wch:12},{wch:35}];
+      XLSX.utils.book_append_sheet(wb, ws, "الوصولات");
+      return wb;
+    }
+
+    function downloadExcel() {
+      if (!receipts.length) return alert("لا توجد وصولات محفوظة بعد.");
+      const wb = buildExcelWorkbook();
+      XLSX.writeFile(wb, `الوصولات_${Date.now()}.xlsx`);
+    }
+
+    function openExcelInTab() {
+      if (!receipts.length) return alert("لا توجد وصولات محفوظة بعد.");
+      const wb = buildExcelWorkbook();
+      const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      const blob = new Blob([wbout], { type: "application/octet-stream" });
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `الوصولات_${Date.now()}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    document.getElementById('excelBtn').addEventListener('click', downloadExcel);
+    document.getElementById('openExcelBtn').addEventListener('click', openExcelInTab);
+
+    // ========= مسح السجل =========
+    document.getElementById('clearReceiptsBtn').addEventListener('click', () => {
+      if (confirm('سيتم حذف كل الوصولات المخزّنة محلياً، هل أنت متأكد؟')) {
+        receipts = [];
+        localStorage.removeItem('receipts');
+        alert('تم مسح السجل.');
+      }
+    });
+  </script>
+</body>
+</html>
